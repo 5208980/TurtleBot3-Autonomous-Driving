@@ -1,0 +1,6 @@
+<launch>
+	<!--    
+	<node pkg="project-2" name="ground_view_helper" type="ground_view_helper.py" output="screen" />
+	-->
+    <node pkg="project-2" name="ground_view" type="ground_view.py" output="screen" />
+</launch>

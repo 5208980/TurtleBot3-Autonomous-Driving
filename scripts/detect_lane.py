@@ -1,6 +1,9 @@
+#!/usr/bin/env python
+
+from __future__ import division
 import rospy
 import cv2
-from cv_bridge import CvBridg
+from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float64
 
@@ -14,8 +17,11 @@ class LaneDetectNode():
 		self.top_y = 5
 		self.bottom_x = 250
 		self.bottom_y = 239
-	    self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
-        self.pub_image = rospy.Publisher('/lane_detect/image', Image, queue_size=1)
+		self.bridge = CvBridge()
+		self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
+		self.pub_image = rospy.Publisher('/lane_detect/image', Image, queue_size=1)
+		self.pub_image_right = rospy.Publisher('/lane_detect/right', Image, queue_size=1)
+		self.pub_image_left = rospy.Publisher('/lane_detect/left', Image, queue_size=1)
 		self.pub_center = rospy.Publisher('/lane_detect/center', Float64, queue_size=1)
 
 	# Calculate Cluster of lines in lanes
@@ -38,8 +44,9 @@ class LaneDetectNode():
 
 	# Gets the x-intercept
 	def get_x_intercept(self, m, b):
-		y = 0
-		x = (-b)/m
+		x, y = 0, 0
+		if m != 0:
+			x = (-b)/m
 		return (x, y)
 
 	# Frame Masking for Area of interest (lane in front of TurtleBot)
@@ -52,7 +59,7 @@ class LaneDetectNode():
 		return frame
 
 	# Change (Like Bird Eye) perception of image
-	def projected_perspective(frame):
+	def projected_perspective(self, frame):
 		pts_src = np.array([
 		[320 - self.top_x, 360 - self.top_y],
 		[320 + self.top_x, 360 - self.top_y],
@@ -106,16 +113,17 @@ class LaneDetectNode():
 				intercept = y1 - (slope * x1)
 
 				if -0.2 < slope and slope < 0.2:
-					cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+					# cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+					x = 0
 				else:
 					lane['n'] += 1
 					lane['slope'] += slope
 					lane['intercept'] += intercept
-					# cv2.line(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+					cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 		# cv2.line(frame, pt1, pt2, (255, 255, 255), 2)
 
 		# mb[0], mb[1] = gradient, y-intercept
-		mb = average_line(lane)
+		mb = self.average_line(lane)
 		if not mb is None:
 			lane = { 'n': 1, 'slope': mb[0], 'intercept': mb[1] }
 			# CvFrame, {nLane, gradient, intercept}
@@ -126,40 +134,64 @@ class LaneDetectNode():
 		frame_copy = frame.copy()	# Original
 
 		height, width, channel = frame.shape
-		frame_left = mask_lanes(frame_copy, [[0, 0], [int(width/2), 0], [int(width/2), height], [0, height]])
-		frame_right = mask_lanes(frame_copy, [[int(width/2), 0], [width, 0], [width, height], [int(width/2), height]])
+		frame_left = self.mask_lanes(frame_copy, [[0, 0], [int(width/2), 0], [int(width/2), height], [0, height]])
+		frame_right = self.mask_lanes(frame_copy, [[int(width/2), 0], [width, 0], [width, height], [int(width/2), height]])
 
-		frame_right_with_lines, right_lane = detect_lines(frame_right)
-		frame_left_with_lines, left_lane = detect_lines(frame_left)
+		frame_right_with_lines, right_lane = self.detect_lines(frame_right)
+		frame_left_with_lines, left_lane = self.detect_lines(frame_left)					
+		# frame_left_with_lines, left_lane = None, None
+		# frame_right_with_lines, right_lane = None, None
+		# Used for Visualisation (Left and Right Lane Detection)
+		
+		if not right_lane is None:
+			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
+			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
+		img_msg = self.bridge.cv2_to_imgmsg(frame_right_with_lines, "bgr8")
+		self.pub_image_right.publish(img_msg)
+
+		if not left_lane is None:
+			pt_l1, pt_l2 = self.get_points(left_lane['slope'], left_lane['intercept'])
+			cv2.line(frame_left_with_lines, pt_l1, pt_l2, (2, 255, 255), 2)
+		img_msg = self.bridge.cv2_to_imgmsg(frame_left_with_lines, "bgr8")
+		self.pub_image_left.publish(img_msg)
 
 		# Found Robot Line
 		if not (right_lane and left_lane) is None: # If Left and Right Available (Average Out Lines)
-			pt_r1, pt_r2 = get_points(right_lane['slope'], right_lane['intercept'])
+			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
-			pt_l1, pt_l2 = get_points(left_lane['slope'], left_lane['intercept'])
+			pt_l1, pt_l2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_l1, pt_l2, (0, 255, 255), 2)
 
-			(rx, ry) = get_x_intercept(right_lane['slope'], right_lane['intercept'])
-			(lx, ly) = get_x_intercept(left_lane['slope'], left_lane['intercept'])
+			(rx, ry) = self.get_x_intercept(right_lane['slope'], right_lane['intercept'])
+			(lx, ly) = self.get_x_intercept(left_lane['slope'], left_lane['intercept'])
 			self.avgx = int((rx + lx)/2)
 			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
 		elif not left_lane is None: # If Left Available (LeftLaneHug)
-			pt_r1, pt_r2 = get_points(left_lane['slope'], left_lane['intercept'])
+			pt_r1, pt_r2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 		else: # If None (TravelStraight or takest last known center)
 			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
 			pass
 
+		# Publish center for controlNode
+		msg_desired_center = Float64()
+		msg_desired_center.data = self.avgx
+		self.pub_center.publish(msg_desired_center)
+
 		return frame
 
-	def detect_lane_cb(self, msg):
-		# Need to img to cv2
-		frame = projected_perspective(frame)
-		frame = detect_and_draw_lane(frame)
+	def detect_lane_cb(self, frame):
+		frame_arr = np.fromstring(frame.data, np.uint8)
+		frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
+		frame = self.projected_perspective(frame)
+		frame = self.detect_and_draw_lane(frame)
+		img_msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
+		self.pub_image.publish(img_msg)
 
 	def main(self):
 		rospy.spin()
 
 if __name__ == '__main__': # sys.argv
+	rospy.init_node('detect_lane')
 	node = LaneDetectNode()
 	node.main()

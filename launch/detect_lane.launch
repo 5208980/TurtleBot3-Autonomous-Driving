@@ -1,0 +1,3 @@
+<launch>
+    <node pkg="project-2" name="detect_lane" type="detect_lane.py" output="screen" />
+</launch>

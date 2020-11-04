@@ -19,27 +19,16 @@ turtlebot_state = Enum('state', 'go stop')
 '''
 Problems:
 	- what todo after the bot has stopped.
-	- If multiple stops are given in one msg.
+	-
 '''
 
 class StopNode:
 	def __init__(self):
-		self.onload()
 		self.name = 'StopSignDetectNode ::'
 		self.bridge = CvBridge()
 		self.counter = 1
 		self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb)
-		self.pub_stop = rospy.Publisher('/detect/stop_sign', UInt8, queue_size=1)	# 1 or 2
-		self.pub_img = rospy.Publisher('/detect/image', Image, queue_size=1)	# Image with rectange
-	
-	def onload(self):
-		# Load Classifier
-		dir_path = os.path.dirname(os.path.realpath(__file__))
-		dir_path += '/stop_data.xml'
-
-		self.model = cv2.CascadeClassifier()
-		if not self.model.load(dir_path):
-			rospy.logerr('%s Classifier couldn\'t load', self.name)
+		self.pub_stop = rospy.Publisher('/detect/stop_sign', UInt8, queue_size=1)
 
 	def stop_sign_detect_cb(self, frame):
 		# debug from still image in assets
@@ -59,28 +48,26 @@ class StopNode:
 		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-		# cv2.imshow("Image Window", frame_gray)
-		# cv2.waitKey(3)
+		model = cv2.CascadeClassifier('stop_data.xml')
 
 		# Use minSize because for not bothering with extra-small dots that would look like STOP signs
-		found = self.model.detectMultiScale(frame_gray, minSize=(20, 20))
+		found = model.detectMultiScale(frame_gray, minSize=(20, 20))
 		n_stops = len(found)
 
 		# visualisation of stop sign (for >= 1)
 		if n_stops > 0:
-			# height and width should be ~ 84
+			# DEBUG PURPOSES
 			for (x, y, width, height) in found:
-				cv2.rectangle(frame_rgb, (x, y), (x + height, y + width), (0, 255, 0), 5)
-				
-				if height == 84:
-					rospy.loginfo("%s TurtleBot Stopping", self.name)
-					# Use this to stop the turtlebot
-					pub_msg = UInt8()
-					pub_msg.data = turtlebot_state.stop.value
-					self.pub_stop.publish(pub_msg)
+				cv2.rectangle(img_rgb, (x, y), (x + height, y + width), (0, 255, 0), 5)
 
-			img_msg = self.bridge.cv2_to_imgmsg(frame_rgb, "bgr8")
-			self.pub_img.publish(img_msg)
+			# Use this to stop the turtlebot
+			pub_msg = UInt8()
+			pub_msg.data = turtlebot_state.stop.value
+			rospy.loginfo("%s RaspiCam detected Stop Sign", self.name)
+
+		# plt.subplot(1, 1, 1)
+		# plt.imshow(img_rgb)
+		# plt.show()
 
 	def main(self):
 		rospy.loginfo("%s Spinning", self.name)

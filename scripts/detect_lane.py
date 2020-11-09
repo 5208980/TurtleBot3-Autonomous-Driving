@@ -7,22 +7,31 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float64
 
+from geometry_msgs.msg import Twist
+
 import numpy as np
-# import matplotlib.pyplot as plt
+import math
 
 class LaneDetectNode():
 	def __init__(self):
+		self.name = "LaneDetectionNode ::"
+		self.counter = 0
 		self.avgx = 0
 		self.top_x = 250
 		self.top_y = 5
 		self.bottom_x = 250
 		self.bottom_y = 239
 		self.bridge = CvBridge()
-		self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
+		# self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
+		self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.detect_lane_cb, queue_size = 3, buff_size = 4)		
 		self.pub_image = rospy.Publisher('/lane_detect/image', Image, queue_size=1)
-		self.pub_image_right = rospy.Publisher('/lane_detect/right', Image, queue_size=1)
-		self.pub_image_left = rospy.Publisher('/lane_detect/left', Image, queue_size=1)
+		self.pub_image_right = rospy.Publisher('/lane_detect/image/right', Image, queue_size=1)
+		self.pub_image_left = rospy.Publisher('/lane_detect/image/left', Image, queue_size=1)
 		self.pub_center = rospy.Publisher('/lane_detect/center', Float64, queue_size=1)
+		self.pub_cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+
+		self.frame_threshold = 0
+		self.prev_frames = []
 
 	# Calculate Cluster of lines in lanes
 	def average_line(self, lines):
@@ -75,6 +84,7 @@ class LaneDetectNode():
 
 	# Original -> GrayScale -> Darken -> HLS -> Threshold -> Gaussian Blur -> Canny -> Hough
 	def detect_lines(self, frame):
+		frame_copy = frame.copy()
 		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
 		frame_hsl = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # HLS
 		frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
@@ -94,8 +104,10 @@ class LaneDetectNode():
 		upper = int(min(255, (1.0 + sigma) * v))
 		edges = cv2.Canny(frame_blur, lower, upper, apertureSize = 3) # Canny
 
-		lines = cv2.HoughLines(edges, 0.8, np.pi/180, 80) # Hough
+		lines = cv2.HoughLines(edges, 1, np.pi/180, 80) # Hough
+		# lines = cv2.HoughLinesP(edges, 1, np.pi/180, 30, maxLineGap=200)
 
+		line_image = np.zeros_like(frame)
 		lane = { 'n': 0, 'slope': 0, 'intercept': 0 }
 		if not lines is None:
 			for line in lines:
@@ -113,17 +125,22 @@ class LaneDetectNode():
 				intercept = y1 - (slope * x1)
 
 				if -0.2 < slope and slope < 0.2:
-					# cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+					cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 					x = 0
 				else:
 					lane['n'] += 1
 					lane['slope'] += slope
 					lane['intercept'] += intercept
 					cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
+					cv2.line(frame_copy, (x1, y1), (x2, y2), (255, 255, 255), 2)
+					cv2.line(line_image, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+		line_image = cv2.addWeighted(frame, 0.8, line_image, 1, 1)  
 		# cv2.line(frame, pt1, pt2, (255, 255, 255), 2)
 
+		# heading_image = self.display_heading_line(frame, steering_angle)
 		# mb[0], mb[1] = gradient, y-intercept
-		mb = self.average_line(lane)
+		mb = self.average_line(lane) 
 		if not mb is None:
 			lane = { 'n': 1, 'slope': mb[0], 'intercept': mb[1] }
 			# CvFrame, {nLane, gradient, intercept}
@@ -143,6 +160,7 @@ class LaneDetectNode():
 		# frame_right_with_lines, right_lane = None, None
 		# Used for Visualisation (Left and Right Lane Detection)
 		
+		
 		if not right_lane is None:
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
@@ -154,9 +172,10 @@ class LaneDetectNode():
 			cv2.line(frame_left_with_lines, pt_l1, pt_l2, (2, 255, 255), 2)
 		img_msg = self.bridge.cv2_to_imgmsg(frame_left_with_lines, "bgr8")
 		self.pub_image_left.publish(img_msg)
-
+		
 		# Found Robot Line
 		if not (right_lane and left_lane) is None: # If Left and Right Available (Average Out Lines)
+			print("Moving Forward")
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 			pt_l1, pt_l2 = self.get_points(left_lane['slope'], left_lane['intercept'])
@@ -164,31 +183,93 @@ class LaneDetectNode():
 
 			(rx, ry) = self.get_x_intercept(right_lane['slope'], right_lane['intercept'])
 			(lx, ly) = self.get_x_intercept(left_lane['slope'], left_lane['intercept'])
+
 			self.avgx = int((rx + lx)/2)
 			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
-		elif not left_lane is None: # If Left Available (LeftLaneHug)
+
+			'''twist = Twist()
+			twist.linear.x = 0.04
+			twist.linear.y = 0
+			twist.linear.z = 0
+			twist.angular.x = 0
+			twist.angular.y = 0
+			# twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
+			twist.angular.z = 0
+			self.pub_cmd.publish(twist)'''
+		elif not left_lane is None: # If Left Available (Turn right)
+			print("Turn Right")
 			pt_r1, pt_r2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
+
+			'''
+			rlines = self.make_points(frame, (left_lane['slope'], left_lane['intercept']))
+			lane_lines = [llines, rlines]
+			steering_angle = self.get_steering_angle(frame_copy, lane_lines)
+			'''
+			'''twist = Twist()
+			twist.linear.x = 0.04
+			twist.linear.y = 0
+			twist.linear.z = 0
+			twist.angular.x = 0
+			twist.angular.y = 0
+			# twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
+			twist.angular.z = -0.1
+			self.pub_cmd.publish(twist)'''
+		elif not right_lane is None: # If Right Available (Turn left)
+			print("Turn Left")
+			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
+			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
+
+			'''
+			rlines = self.make_points(frame, (left_lane['slope'], left_lane['intercept']))
+			lane_lines = [llines, rlines]
+			steering_angle = self.get_steering_angle(frame_copy, lane_lines)
+			'''
+			'''twist = Twist()
+			twist.linear.x = 0.00
+			twist.linear.y = 0
+			twist.linear.z = 0
+			twist.angular.x = 0
+			twist.angular.y = 0
+			# twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
+			twist.angular.z = 0.2
+			self.pub_cmd.publish(twist)'''
+			steering_angle = self.get_steering_angle(frame_copy, [])
 		else: # If None (TravelStraight or takest last known center)
+			print("No Lanes !!")
 			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
-			pass
+			twist = Twist()
 
-		# Publish center for controlNode
-		msg_desired_center = Float64()
-		msg_desired_center.data = self.avgx
-		self.pub_center.publish(msg_desired_center)
-
-		return frame
+		return frame	
 
 	def detect_lane_cb(self, frame):
-		frame_arr = np.fromstring(frame.data, np.uint8)
+		'''
+		if self.frame_threshold == 0:
+			self.frame_threshold = frame.header.stamp.secs
+		else:
+			# print(frame.header.stamp.nsecs)	# 1000000000 nsecs = 1 secs
+			if frame.header.stamp.secs < self.frame_threshold + 1:
+				self.counter += 1
+		print(frame.header.stamp.secs, self.frame_threshold, self.counter)
+		'''	
+		'''		
+		if len(self.prev_frames) != 0:
+			first_frame = self.prev_frames[0]
+			if frame.header.stamp.secs + 2 > first_frame:
+				frame = self.prev_frames.pop()
+		else:	# Empty
+			self.prev_frames.append(frame)
+			return
+		'''
+		frame_arr = np.fromstring(frame.data, np.uint8)		# Convert image to Cv
 		frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
-		frame = self.projected_perspective(frame)
-		frame = self.detect_and_draw_lane(frame)
+		frame = self.projected_perspective(frame)			# Project image
+		frame = self.detect_and_draw_lane(frame)			
 		img_msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-		self.pub_image.publish(img_msg)
+		self.pub_image.publish(img_msg)	
 
 	def main(self):
+		rospy.loginfo("%s Spinning", self.name)
 		rospy.spin()
 
 if __name__ == '__main__': # sys.argv

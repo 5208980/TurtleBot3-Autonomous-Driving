@@ -22,14 +22,15 @@ class LaneDetectNode():
 		self.bottom_x = 250
 		self.bottom_y = 239
 		self.bridge = CvBridge()
-		# self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
-		self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.detect_lane_cb, queue_size = 3, buff_size = 4)		
+		self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
+		# self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.detect_lane_cb, queue_size = 3, buff_size = 4)		
 		self.pub_image = rospy.Publisher('/lane_detect/image', Image, queue_size=1)
 		self.pub_image_right = rospy.Publisher('/lane_detect/image/right', Image, queue_size=1)
 		self.pub_image_left = rospy.Publisher('/lane_detect/image/left', Image, queue_size=1)
-		self.pub_center = rospy.Publisher('/lane_detect/center', Float64, queue_size=1)
+		self.pub_action = rospy.Publisher('/lane_detect/action', Float64, queue_size=1)
 		self.pub_cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
 
+		self.prev_action = 0
 		self.frame_threshold = 0
 		self.prev_frames = []
 
@@ -86,13 +87,17 @@ class LaneDetectNode():
 	def detect_lines(self, frame):
 		frame_copy = frame.copy()
 		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
-		frame_hsl = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # HLS
+		frame_hsl = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS) # HLS
 		frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
 
-		# lower = np.array([106,0,155])
-		# upper = np.array([173,26,201])
-		# mask = cv2.inRange(frame_hsl, lower, upper)
-		# frame_thres = cv2.bitwise_and(frame_hsl, frame_hsl, mask=mask) # Threshold (Mask)
+		'''
+		lower = np.array([106,0,155])
+		upper = np.array([173,26,201])
+		mask = cv2.inRange(frame_hsl, lower, upper)
+		frame_thres = cv2.bitwise_and(frame_hsl, frame_hsl, mask=mask) # Threshold (Mask)
+		frame_gauss = cv2.GaussianBlur(frame_thres, (5,5), cv2.BORDER_DEFAULT) # Gaussian
+		'''
+
 		frame_gauss = cv2.GaussianBlur(frame_gray, (5,5), cv2.BORDER_DEFAULT) # Gaussian
 
 		_, frame_filtered = cv2.threshold(frame_gauss, 133 ,255, cv2.THRESH_BINARY)
@@ -163,7 +168,7 @@ class LaneDetectNode():
 		
 		if not right_lane is None:
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
-			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
+			cv2.line(frame, pt_r1, pt_r2, (2, 255, 255), 2)
 		img_msg = self.bridge.cv2_to_imgmsg(frame_right_with_lines, "bgr8")
 		self.pub_image_right.publish(img_msg)
 
@@ -175,29 +180,95 @@ class LaneDetectNode():
 		
 		# Found Robot Line
 		if not (right_lane and left_lane) is None: # If Left and Right Available (Average Out Lines)
-			print("Moving Forward")
+			print("Two Lanes")
+
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 			pt_l1, pt_l2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_l1, pt_l2, (0, 255, 255), 2)
+			
 
-			(rx, ry) = self.get_x_intercept(right_lane['slope'], right_lane['intercept'])
-			(lx, ly) = self.get_x_intercept(left_lane['slope'], left_lane['intercept'])
+			print(left_lane['slope'], left_lane['intercept'])
+			print(right_lane['slope'], right_lane['intercept'])
 
-			self.avgx = int((rx + lx)/2)
-			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
+			is_right_lane = False
+			if right_lane['intercept'] > height:
+				is_right_lane = True
 
-			'''twist = Twist()
-			twist.linear.x = 0.04
-			twist.linear.y = 0
-			twist.linear.z = 0
-			twist.angular.x = 0
-			twist.angular.y = 0
-			# twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
-			twist.angular.z = 0
-			self.pub_cmd.publish(twist)'''
+			is_left_lane = False
+			if left_lane['intercept'] < height:
+				is_left_lane = True
+
+			if (left_lane['slope'] < 0 and right_lane['slope'] > 0) and ():
+				# (height):
+				print("Turn Right")
+				action = Float64()
+				action.data = 4
+				self.pub_action.publish(action)
+				self.prev_action = action
+			# elif left_lane['slope'] > -0.5 and right_lane['slope'] < -0.5:
+			elif (left_lane['slope'] > 0 and right_lane['slope'] < 0):
+				print("Turn Left")
+				action = Float64()
+				action.data = 3
+				self.pub_action.publish(action)
+				self.prev_action = action
+			elif (left_lane['slope'] < 0 and right_lane['slope'] < 0):
+				is_right_lane = False
+				if right_lane['intercept'] > height:
+					is_right_lane = True
+
+				is_left_lane = False
+				if left_lane['intercept'] < height:
+					is_left_lane = True
+				
+				if (is_right_lane or is_left_lane):
+					print("Turn Right")
+					action = Float64()
+					action.data = 4
+					self.pub_action.publish(action)
+					self.prev_action = action
+				else:
+					print("Straight")
+					action = Float64()
+					action.data = 0
+					self.pub_action.publish(action)
+					self.prev_action = action
+			elif (left_lane['slope'] > 0 and right_lane['slope'] > 0) and (is_right_lane or is_left_lane):
+				is_left_lane = False
+				if left_lane['intercept'] > height/2:
+					is_left_lane = True
+
+				is_right_lane = False
+				if right_lane['intercept'] < 0:
+					is_right_lane = True
+				
+				if (is_right_lane or is_left_lane):
+					print("Turn Left")
+					action = Float64()
+					action.data = 3
+					self.pub_action.publish(action)
+					self.prev_action = action
+				else:
+					print("Straight")
+					action = Float64()
+					action.data = 0
+					self.pub_action.publish(action)
+					self.prev_action = action
+			else:
+				print("Straight")
+				(rx, ry) = self.get_x_intercept(right_lane['slope'], right_lane['intercept'])
+				(lx, ly) = self.get_x_intercept(left_lane['slope'], left_lane['intercept'])
+
+				self.avgx = int((rx + lx)/2)
+				cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
+
+				action = Float64()
+				action.data = 0
+				self.pub_action.publish(action)
+				self.prev_action = action
 		elif not left_lane is None: # If Left Available (Turn right)
-			print("Turn Right")
+			print("Left Mask")
 			pt_r1, pt_r2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 
@@ -206,17 +277,28 @@ class LaneDetectNode():
 			lane_lines = [llines, rlines]
 			steering_angle = self.get_steering_angle(frame_copy, lane_lines)
 			'''
-			'''twist = Twist()
-			twist.linear.x = 0.04
-			twist.linear.y = 0
-			twist.linear.z = 0
-			twist.angular.x = 0
-			twist.angular.y = 0
-			# twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
-			twist.angular.z = -0.1
-			self.pub_cmd.publish(twist)'''
+			# Check gradients
+			print("y = {}x + {}".format(left_lane['slope'], left_lane['intercept']))
+			if left_lane['slope'] < 0:	# Turn Right
+				print("Turn Right")
+				action = Float64()
+				action.data = 4
+				self.pub_action.publish(action)
+				self.prev_action = action
+			elif left_lane['slope'] > 0:	# Turn Left
+				print("Turn LEft")
+				action = Float64()
+				action.data = 3
+				self.pub_action.publish(action)
+				self.prev_action = action
+			else:			
+				print("Turn Right")
+				action = Float64()
+				action.data = 4
+				self.pub_action.publish(action)
+				self.prev_action = action
 		elif not right_lane is None: # If Right Available (Turn left)
-			print("Turn Left")
+			print("Right Mask")
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 
@@ -225,20 +307,33 @@ class LaneDetectNode():
 			lane_lines = [llines, rlines]
 			steering_angle = self.get_steering_angle(frame_copy, lane_lines)
 			'''
-			'''twist = Twist()
-			twist.linear.x = 0.00
-			twist.linear.y = 0
-			twist.linear.z = 0
-			twist.angular.x = 0
-			twist.angular.y = 0
-			# twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
-			twist.angular.z = 0.2
-			self.pub_cmd.publish(twist)'''
-			steering_angle = self.get_steering_angle(frame_copy, [])
+			
+			if right_lane['slope'] < 0:	# Turn Right
+				print("Turn Right")
+				action = Float64()
+				action.data = 4
+				self.pub_action.publish(action)
+				self.prev_action = action
+			elif right_lane['slope'] > 0:	# Turn Left
+				print("Turn LEft")
+				action = Float64()
+				action.data = 3
+				self.pub_action.publish(action)
+				self.prev_action = action
+			else:			
+				print("Turn Left")
+				action = Float64()
+				action.data = 3
+				self.pub_action.publish(action)
+				self.prev_action = action
 		else: # If None (TravelStraight or takest last known center)
 			print("No Lanes !!")
 			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
-			twist = Twist()
+			action = Float64()
+			action.data = 5
+			self.pub_action.publish(action)
+			self.pub_action.publish(self.prev_action)
+			# self.prev_action = action
 
 		return frame	
 
@@ -252,7 +347,7 @@ class LaneDetectNode():
 				self.counter += 1
 		print(frame.header.stamp.secs, self.frame_threshold, self.counter)
 		'''	
-		'''		
+			
 		if len(self.prev_frames) != 0:
 			first_frame = self.prev_frames[0]
 			if frame.header.stamp.secs + 2 > first_frame:
@@ -260,7 +355,7 @@ class LaneDetectNode():
 		else:	# Empty
 			self.prev_frames.append(frame)
 			return
-		'''
+
 		frame_arr = np.fromstring(frame.data, np.uint8)		# Convert image to Cv
 		frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
 		frame = self.projected_perspective(frame)			# Project image

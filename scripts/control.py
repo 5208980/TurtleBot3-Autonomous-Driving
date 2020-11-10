@@ -33,8 +33,8 @@ class TurtleBotControlNode():
 		print(center_msg.data)
 		twist = Twist()
 		if center_msg.data == 0:
+			# twist.linear.x = 0.1
 			twist.linear.x = 0.0
-			# twist.linear.x = 0.0
 			twist.linear.y = 0
 			twist.linear.z = 0
 			twist.angular.x = 0
@@ -63,7 +63,7 @@ class TurtleBotControlNode():
 			twist.linear.z = 0
 			twist.angular.x = 0
 			twist.angular.y = 0
-			twist.angular.z = 0.1
+			twist.angular.z = 0.0
 			self.pub_cmd.publish(twist) 
 		elif center_msg.data == 4: # Turn Right
 			twist.linear.x = 0.00
@@ -71,7 +71,8 @@ class TurtleBotControlNode():
 			twist.linear.z = 0
 			twist.angular.x = 0
 			twist.angular.y = 0
-			twist.angular.z = -0.0
+			twist.angular.z = 0
+			# twist.angular.z = -0.1
 			self.pub_cmd.publish(twist)
 		else:
 			twist.linear.x = 0.00

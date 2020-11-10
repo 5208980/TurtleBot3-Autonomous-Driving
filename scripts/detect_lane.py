@@ -22,8 +22,8 @@ class LaneDetectNode():
 		self.bottom_x = 250
 		self.bottom_y = 239
 		self.bridge = CvBridge()
-		self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
-		# self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.detect_lane_cb, queue_size = 3, buff_size = 4)		
+		# self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.detect_lane_cb, queue_size = 1)
+		self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.detect_lane_cb, queue_size=1)		
 		self.pub_image = rospy.Publisher('/lane_detect/image', Image, queue_size=1)
 		self.pub_image_right = rospy.Publisher('/lane_detect/image/right', Image, queue_size=1)
 		self.pub_image_left = rospy.Publisher('/lane_detect/image/left', Image, queue_size=1)
@@ -70,6 +70,30 @@ class LaneDetectNode():
 
 	# Change (Like Bird Eye) perception of image
 	def projected_perspective(self, frame):
+		# Vertices extracted manually for performing a perspective transform
+		bottom_left = [105, 480]
+		bottom_right = [530, 480]
+		top_left = [205, 300]
+		top_right = [435, 300]
+
+		source = np.float32([bottom_left,bottom_right,top_right,top_left])
+
+		# Destination points are chosen such that straight lanes appear more or less parallel in the transformed image.
+		bottom_left = [200, 480]
+		bottom_right = [440, 480]
+		top_left = [200, 1]
+		top_right = [440, 1]
+
+		dst = np.float32([bottom_left,bottom_right,top_right,top_left])
+		M = cv2.getPerspectiveTransform(source, dst)
+		warped_size = (640, 480)
+		warped = cv2.warpPerspective(frame, M, warped_size, flags=cv2.INTER_NEAREST)
+		
+		# out_img = np.uint8(np.dstack((warped, warped, warped))*255)
+
+		return warped
+		
+		'''
 		pts_src = np.array([
 		[320 - self.top_x, 360 - self.top_y],
 		[320 + self.top_x, 360 - self.top_y],
@@ -82,35 +106,37 @@ class LaneDetectNode():
 		frame = frame[0:897, 116:883]	# remove the black sides
 
 		return frame
+		'''
 
 	# Original -> GrayScale -> Darken -> HLS -> Threshold -> Gaussian Blur -> Canny -> Hough
 	def detect_lines(self, frame):
 		frame_copy = frame.copy()
 		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
-		frame_hsl = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS) # HLS
+		hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # HLS
 		frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
 
+
+		lower = np.array([0,0,122])
+		upper = np.array([175,24,196])
+		mask = cv2.inRange(hsv, lower, upper)
+		threshold = cv2.bitwise_and(frame_copy, frame_copy, mask= mask)
+		# frame_gauss = cv2.GaussianBlur(frame_thres, (5,5), cv2.BORDER_DEFAULT) # Gaussian
+		# frame_gauss = cv2.GaussianBlur(frame_gray, (5,5), cv2.BORDER_DEFAULT) # Gaussian
+
+		# _, frame_filtered = cv2.threshold(frame_gauss, 133 ,255, cv2.THRESH_BINARY)
+		# frame_blur = cv2.GaussianBlur(frame_filtered, (5,5), cv2.BORDER_DEFAULT)
+		return threshold
 		'''
-		lower = np.array([106,0,155])
-		upper = np.array([173,26,201])
-		mask = cv2.inRange(frame_hsl, lower, upper)
-		frame_thres = cv2.bitwise_and(frame_hsl, frame_hsl, mask=mask) # Threshold (Mask)
-		frame_gauss = cv2.GaussianBlur(frame_thres, (5,5), cv2.BORDER_DEFAULT) # Gaussian
-		'''
-
-		frame_gauss = cv2.GaussianBlur(frame_gray, (5,5), cv2.BORDER_DEFAULT) # Gaussian
-
-		_, frame_filtered = cv2.threshold(frame_gauss, 133 ,255, cv2.THRESH_BINARY)
-		frame_blur = cv2.GaussianBlur(frame_filtered, (5,5), cv2.BORDER_DEFAULT)
-
 		v = np.median(frame)
 		sigma = 0.33
 		lower = int(max(0, (1.0 - sigma) * v))
 		upper = int(min(255, (1.0 + sigma) * v))
-		edges = cv2.Canny(frame_blur, lower, upper, apertureSize = 3) # Canny
+		edges = cv2.Canny(frame_thres, lower, upper, apertureSize = 3) # Canny
 
 		lines = cv2.HoughLines(edges, 1, np.pi/180, 80) # Hough
 		# lines = cv2.HoughLinesP(edges, 1, np.pi/180, 30, maxLineGap=200)
+
+		# lines = cv2.HoughLinesP(edges, cv2.HOUGH_PROBABILISTIC, np.pi/180, 90, minLineLength = 50, maxLineGap = 2)
 
 		line_image = np.zeros_like(frame)
 		lane = { 'n': 0, 'slope': 0, 'intercept': 0 }
@@ -151,7 +177,7 @@ class LaneDetectNode():
 			# CvFrame, {nLane, gradient, intercept}
 			return frame, lane
 		return frame, None
-
+		'''
 	def detect_and_draw_lane(self, frame):
 		frame_copy = frame.copy()	# Original
 
@@ -186,180 +212,31 @@ class LaneDetectNode():
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 			pt_l1, pt_l2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_l1, pt_l2, (0, 255, 255), 2)
-			
-
-			print(left_lane['slope'], left_lane['intercept'])
-			print(right_lane['slope'], right_lane['intercept'])
-
-			is_right_lane = False
-			if right_lane['intercept'] > height:
-				is_right_lane = True
-
-			is_left_lane = False
-			if left_lane['intercept'] < height:
-				is_left_lane = True
-
-			if (left_lane['slope'] < 0 and right_lane['slope'] > 0) and ():
-				# (height):
-				print("Turn Right")
-				action = Float64()
-				action.data = 4
-				self.pub_action.publish(action)
-				self.prev_action = action
-			# elif left_lane['slope'] > -0.5 and right_lane['slope'] < -0.5:
-			elif (left_lane['slope'] > 0 and right_lane['slope'] < 0):
-				print("Turn Left")
-				action = Float64()
-				action.data = 3
-				self.pub_action.publish(action)
-				self.prev_action = action
-			elif (left_lane['slope'] < 0 and right_lane['slope'] < 0):
-				is_right_lane = False
-				if right_lane['intercept'] > height:
-					is_right_lane = True
-
-				is_left_lane = False
-				if left_lane['intercept'] < height:
-					is_left_lane = True
-				
-				if (is_right_lane or is_left_lane):
-					print("Turn Right")
-					action = Float64()
-					action.data = 4
-					self.pub_action.publish(action)
-					self.prev_action = action
-				else:
-					print("Straight")
-					action = Float64()
-					action.data = 0
-					self.pub_action.publish(action)
-					self.prev_action = action
-			elif (left_lane['slope'] > 0 and right_lane['slope'] > 0) and (is_right_lane or is_left_lane):
-				is_left_lane = False
-				if left_lane['intercept'] > height/2:
-					is_left_lane = True
-
-				is_right_lane = False
-				if right_lane['intercept'] < 0:
-					is_right_lane = True
-				
-				if (is_right_lane or is_left_lane):
-					print("Turn Left")
-					action = Float64()
-					action.data = 3
-					self.pub_action.publish(action)
-					self.prev_action = action
-				else:
-					print("Straight")
-					action = Float64()
-					action.data = 0
-					self.pub_action.publish(action)
-					self.prev_action = action
-			else:
-				print("Straight")
-				(rx, ry) = self.get_x_intercept(right_lane['slope'], right_lane['intercept'])
-				(lx, ly) = self.get_x_intercept(left_lane['slope'], left_lane['intercept'])
-
-				self.avgx = int((rx + lx)/2)
-				cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
-
-				action = Float64()
-				action.data = 0
-				self.pub_action.publish(action)
-				self.prev_action = action
 		elif not left_lane is None: # If Left Available (Turn right)
 			print("Left Mask")
 			pt_r1, pt_r2 = self.get_points(left_lane['slope'], left_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
-
-			'''
-			rlines = self.make_points(frame, (left_lane['slope'], left_lane['intercept']))
-			lane_lines = [llines, rlines]
-			steering_angle = self.get_steering_angle(frame_copy, lane_lines)
-			'''
-			# Check gradients
-			print("y = {}x + {}".format(left_lane['slope'], left_lane['intercept']))
-			if left_lane['slope'] < 0:	# Turn Right
-				print("Turn Right")
-				action = Float64()
-				action.data = 4
-				self.pub_action.publish(action)
-				self.prev_action = action
-			elif left_lane['slope'] > 0:	# Turn Left
-				print("Turn LEft")
-				action = Float64()
-				action.data = 3
-				self.pub_action.publish(action)
-				self.prev_action = action
-			else:			
-				print("Turn Right")
-				action = Float64()
-				action.data = 4
-				self.pub_action.publish(action)
-				self.prev_action = action
 		elif not right_lane is None: # If Right Available (Turn left)
 			print("Right Mask")
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
-
-			'''
-			rlines = self.make_points(frame, (left_lane['slope'], left_lane['intercept']))
-			lane_lines = [llines, rlines]
-			steering_angle = self.get_steering_angle(frame_copy, lane_lines)
-			'''
-			
-			if right_lane['slope'] < 0:	# Turn Right
-				print("Turn Right")
-				action = Float64()
-				action.data = 4
-				self.pub_action.publish(action)
-				self.prev_action = action
-			elif right_lane['slope'] > 0:	# Turn Left
-				print("Turn LEft")
-				action = Float64()
-				action.data = 3
-				self.pub_action.publish(action)
-				self.prev_action = action
-			else:			
-				print("Turn Left")
-				action = Float64()
-				action.data = 3
-				self.pub_action.publish(action)
-				self.prev_action = action
 		else: # If None (TravelStraight or takest last known center)
 			print("No Lanes !!")
 			cv2.line(frame, (self.avgx,0), (self.avgx,height), (255, 0, 0), 2)
-			action = Float64()
-			action.data = 5
-			self.pub_action.publish(action)
-			self.pub_action.publish(self.prev_action)
 			# self.prev_action = action
 
 		return frame	
 
 	def detect_lane_cb(self, frame):
-		'''
-		if self.frame_threshold == 0:
-			self.frame_threshold = frame.header.stamp.secs
-		else:
-			# print(frame.header.stamp.nsecs)	# 1000000000 nsecs = 1 secs
-			if frame.header.stamp.secs < self.frame_threshold + 1:
-				self.counter += 1
-		print(frame.header.stamp.secs, self.frame_threshold, self.counter)
-		'''	
-			
-		if len(self.prev_frames) != 0:
-			first_frame = self.prev_frames[0]
-			if frame.header.stamp.secs + 2 > first_frame:
-				frame = self.prev_frames.pop()
-		else:	# Empty
-			self.prev_frames.append(frame)
-			return
 
+		
 		frame_arr = np.fromstring(frame.data, np.uint8)		# Convert image to Cv
 		frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
 		frame = self.projected_perspective(frame)			# Project image
-		frame = self.detect_and_draw_lane(frame)			
+
+		# frame = self.detect_and_draw_lane(frame)	
+		frame = self.detect_lines(frame)	
+
 		img_msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
 		self.pub_image.publish(img_msg)	
 

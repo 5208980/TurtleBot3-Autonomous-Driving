@@ -46,8 +46,8 @@ class LaneDetectNode():
 
 	# Returns two point of given gradient and y-inter
 	def get_points(self, m, b):
-		x1 = 0
-		x2 = 100000
+		x1 = int(0)
+		x2 = int(480/2) # 100000
 		y1 = int(m*x1 + b)
 		y2 = int(m*x2 + b)
 		return (x1, y1), (x2, y2)
@@ -110,35 +110,32 @@ class LaneDetectNode():
 
 	# Original -> GrayScale -> Darken -> HLS -> Threshold -> Gaussian Blur -> Canny -> Hough
 	def detect_lines(self, frame):
+		width, height = frame.shape[0],frame.shape[1]
 		frame_copy = frame.copy()
-		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
-		hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # HLS
-		frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
-
+		gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # GrayScale
+		hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # HSV
 
 		lower = np.array([0,0,122])
-		upper = np.array([175,24,196])
+		upper = np.array([175,24,255])
 		mask = cv2.inRange(hsv, lower, upper)
 		threshold = cv2.bitwise_and(frame_copy, frame_copy, mask= mask)
-		# frame_gauss = cv2.GaussianBlur(frame_thres, (5,5), cv2.BORDER_DEFAULT) # Gaussian
-		# frame_gauss = cv2.GaussianBlur(frame_gray, (5,5), cv2.BORDER_DEFAULT) # Gaussian
+		blur = cv2.GaussianBlur(threshold, (5,5), cv2.BORDER_DEFAULT) # Gaussian
+		# blur = cv2.GaussianBlur(blur, (5,5), cv2.BORDER_DEFAULT) # Gaussian
 
-		# _, frame_filtered = cv2.threshold(frame_gauss, 133 ,255, cv2.THRESH_BINARY)
-		# frame_blur = cv2.GaussianBlur(frame_filtered, (5,5), cv2.BORDER_DEFAULT)
-		return threshold
-		'''
+		_, filtered = cv2.threshold(blur, 133 ,255, cv2.THRESH_BINARY)
+		# edges = cv2.Canny(blur, 50, 150)
+		# return frame_filtered
+		
 		v = np.median(frame)
 		sigma = 0.33
 		lower = int(max(0, (1.0 - sigma) * v))
 		upper = int(min(255, (1.0 + sigma) * v))
-		edges = cv2.Canny(frame_thres, lower, upper, apertureSize = 3) # Canny
-
+		edges = cv2.Canny(filtered, lower, upper, apertureSize = 3) # Canny
+		
 		lines = cv2.HoughLines(edges, 1, np.pi/180, 80) # Hough
 		# lines = cv2.HoughLinesP(edges, 1, np.pi/180, 30, maxLineGap=200)
-
 		# lines = cv2.HoughLinesP(edges, cv2.HOUGH_PROBABILISTIC, np.pi/180, 90, minLineLength = 50, maxLineGap = 2)
 
-		line_image = np.zeros_like(frame)
 		lane = { 'n': 0, 'slope': 0, 'intercept': 0 }
 		if not lines is None:
 			for line in lines:
@@ -164,12 +161,9 @@ class LaneDetectNode():
 					lane['intercept'] += intercept
 					cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 					cv2.line(frame_copy, (x1, y1), (x2, y2), (255, 255, 255), 2)
-					cv2.line(line_image, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
-		line_image = cv2.addWeighted(frame, 0.8, line_image, 1, 1)  
 		# cv2.line(frame, pt1, pt2, (255, 255, 255), 2)
 
-		# heading_image = self.display_heading_line(frame, steering_angle)
 		# mb[0], mb[1] = gradient, y-intercept
 		mb = self.average_line(lane) 
 		if not mb is None:
@@ -177,7 +171,7 @@ class LaneDetectNode():
 			# CvFrame, {nLane, gradient, intercept}
 			return frame, lane
 		return frame, None
-		'''
+
 	def detect_and_draw_lane(self, frame):
 		frame_copy = frame.copy()	# Original
 
@@ -194,7 +188,7 @@ class LaneDetectNode():
 		
 		if not right_lane is None:
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
-			cv2.line(frame, pt_r1, pt_r2, (2, 255, 255), 2)
+			cv2.line(frame_right_with_lines, pt_r1, pt_r2, (2, 255, 255), 2)
 		img_msg = self.bridge.cv2_to_imgmsg(frame_right_with_lines, "bgr8")
 		self.pub_image_right.publish(img_msg)
 
@@ -207,7 +201,6 @@ class LaneDetectNode():
 		# Found Robot Line
 		if not (right_lane and left_lane) is None: # If Left and Right Available (Average Out Lines)
 			print("Two Lanes")
-
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 			pt_l1, pt_l2 = self.get_points(left_lane['slope'], left_lane['intercept'])
@@ -219,6 +212,7 @@ class LaneDetectNode():
 		elif not right_lane is None: # If Right Available (Turn left)
 			print("Right Mask")
 			pt_r1, pt_r2 = self.get_points(right_lane['slope'], right_lane['intercept'])
+			print(right_lane['intercept'])
 			cv2.line(frame, pt_r1, pt_r2, (255, 255, 255), 2)
 		else: # If None (TravelStraight or takest last known center)
 			print("No Lanes !!")
@@ -234,8 +228,8 @@ class LaneDetectNode():
 		frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
 		frame = self.projected_perspective(frame)			# Project image
 
-		# frame = self.detect_and_draw_lane(frame)	
-		frame = self.detect_lines(frame)	
+		frame = self.detect_and_draw_lane(frame)	
+		# frame = self.detect_lines(frame)	
 
 		img_msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
 		self.pub_image.publish(img_msg)	

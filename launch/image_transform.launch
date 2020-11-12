@@ -1,0 +1,6 @@
+<launch>
+<!--
+    <node pkg="project_2" name="image_transform" type="image_transform.py" output="screen" />
+-->
+	<node pkg="project_2" name="stop_node" type="stop_node.py" output="screen" />
+</launch>

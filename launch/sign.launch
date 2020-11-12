@@ -1,3 +1,0 @@
-<launch>
-    <node pkg="project_2" name="sign_detect" type="sign_detection.py" output="screen" />
-</launch>

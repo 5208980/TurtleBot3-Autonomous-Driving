@@ -1,8 +1,5 @@
 <launch>
-    <node pkg="project_2" name="images" type="images.py" output="screen" />
+	<node pkg="project_2" name="lane_detection" type="lane_detection.py" output="screen" />
+	<node pkg="project_2" name="stop_node" type="stop_node.py" output="screen" />
     <node pkg="project_2" name="control_node" type="control.py" output="screen" />
-<!--
-    <node pkg="project_2" name="detect_lane" type="detect_lane.py" output="screen" />
-    <node pkg="project_2" name="control_node" type="control.py" output="screen" />
--->
 </launch>

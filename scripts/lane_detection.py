@@ -47,16 +47,16 @@ class LaneDetection:
 	def create_threshold_binary_image(self, frame):
 		frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		frame = cv2.blur(frame,(5,5))
-		_, frame = cv2.threshold(frame, 200 ,255, cv2.THRESH_BINARY)
+		_, frame = cv2.threshold(frame, 175 ,255, cv2.THRESH_BINARY)
 		binary = cv2.blur(frame,(5,5))
 		return binary
 
 	# perspective transform (bird-eye view)
 	def bird_eye_perspective_transform(self, frame):
-		top_x = 170
-		top_y = 50
-		bottom_x = 300
-		bottom_y = 170
+		#top_x = 170
+		#top_y = 30
+		#bottom_x = 300
+		#bottom_y = 230
 
 		top_x = 210	# adjust top width
 		top_y = 30  # adjust top height
@@ -154,50 +154,49 @@ class LaneDetection:
 		left_fitx, right_fitx = None, None
 		if not len(leftx) is 0:
 			left_fit = np.polyfit(lefty, leftx, 2)
-			print('Left lane coefficients: {}'.format(left_fit))
+			# print('Left lane coefficients: {}'.format(left_fit))
 			left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+			# left_fitx = left_fit[0]*ploty**3 + left_fit[1]*ploty**2 + left_fit[2]*ploty + left_fit[3] 
 
 			pts_left = np.array([np.flipud(np.transpose(np.vstack([left_fitx, ploty])))])
 			cv2.polylines(self.frame_bgr, np.int_([pts_left]), isClosed=False, color=(255, 0, 255), thickness=25)
 
 		if not len(rightx) is 0:
 			right_fit = np.polyfit(righty, rightx, 2)
-			print('Right lane coefficients: {}'.format(right_fit))
+			# print('Right lane coefficients: {}'.format(right_fit))
 			right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+			# right_fitx = right_fit[0]*ploty**3 + right_fit[1]*ploty**2 + right_fit[2]*ploty + right_fit[3]
 
 			pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
 			cv2.polylines(self.frame_bgr, np.int_([pts_right]), isClosed=False, color=(255, 0, 255), thickness=25)
 		
 		# Validate lines
-		if (not leftx is None) and (not rightx is None):
+		if (not len(leftx) is 0) and (not len(rightx) is 0):
 			left_x_mean = np.mean(leftx, axis=0)
 			right_x_mean = np.mean(rightx, axis=0)
 			lane_width = np.subtract(right_x_mean, left_x_mean)
-
 			
-			if left_x_mean > (frame.shape[1]/2):
-				print("Bad Left Lane")
+			if left_x_mean > 740:
+				# print("Bad Left Lane")
+				# print(left_x_mean)
 				left_fitx = None
-			if right_x_mean < (frame.shape[1]/2):
-				print("Bad Right Lane")
+			if right_x_mean < 740:
+				# print("Bad Right Lane")
+				# print(right_x_mean)
 				right_fitx = None
 				# return self.prev_left_fitx, self.prev_right_fitx, None, None, self.frame_bgr
-			if  lane_width < 590 or lane_width > 800:
-				print("Bad Lane Size")
-				#left_fitx = self.prev_left_fitx
-				#right_fitx = self.prev_right_fitx
-				# return self.prev_left_fitx, self.prev_right_fitx, None, None, self.frame_bgr
+
+			if lane_width < 100 or lane_width > 900:
+				left_fitx = None
 
 			# Draw width lane on image
-			#position = (10,50)
-			#cv2.putText(self.frame_bgr, str(lane_width), position, cv2.FONT_HERSHEY_SIMPLEX, 1,(209, 80, 0, 255), 3)
+			position = (10,50)
+			cv2.putText(self.frame_bgr, str(lane_width), position, cv2.FONT_HERSHEY_SIMPLEX, 1,(209, 80, 0, 255), 3)
+		elif (not len(leftx) is 0) and (len(rightx) is 0):
+			left_fitx = None
+		else:
+			right_fitx = None
 
-	
-		'''
-		pts = np.hstack((pts_left, pts_right))
-		# Draw the lane onto the warped blank image
-		cv2.fillPoly(self.frame_bgr, np.int_([pts]), (0,255,0))
-		'''
 		self.bad_lanes = False
 
 		# Sliding Window Image
@@ -207,16 +206,20 @@ class LaneDetection:
 		return left_fitx, right_fitx, left_lane_inds, right_lane_inds, self.frame_bgr # bgr8
 		# return None, None, sliding_window_frame
 
-	def publish_center(self, center):
+	def publish_center(self, center, lanes):
 		h = Header()
 		h.stamp = rospy.Time.now()
 
 		t = Float64()
 		t = center
 
+		n = Float64()
+		n = lanes
+
 		lane_msg = Lane()
 		lane_msg.header = h
 		lane_msg.center = t
+		lane_msg.lanes = n
 		self.pub_center.publish(lane_msg)
 
 	def image_cb(self, msg):
@@ -236,14 +239,17 @@ class LaneDetection:
 		left_poly, right_poly, left_pts, right_pts, frame = self.sliding_window(frame)
 
 		if (not left_poly is None) and (not right_poly is None): # Left and Right Lane
+			# print("Two")
 			centerx = np.mean([left_poly, right_poly], axis=0)
-			self.publish_center(centerx.item(350))
+			self.publish_center(centerx.item(350), 2)
 		elif (left_poly is None) and (not right_poly is None): # Only Right Lane
+			# print("Right")
 			centerx = np.subtract(right_poly, 320)
-			self.publish_center(centerx.item(350))
+			self.publish_center(centerx.item(350), 1)
 		elif (not left_poly is None) and (right_poly is None): # Only Left Lane
+			# print("Left")
 			centerx = np.add(left_poly, 320)
-			self.publish_center(centerx.item(350))
+			self.publish_center(centerx.item(350), 1)
 
 		# Lane Lines Image
 		self.pub_lane.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))

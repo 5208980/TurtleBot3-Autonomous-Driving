@@ -37,23 +37,28 @@ class ControlLane():
 		twist.angular.z = 0
 		return twist
 
-	def cbFollowLane(self, center, timer):
+	def cbFollowLane(self, lane, timer):
 		time = timer.data
-		if time > 0:
+		# if time > 0: 
+		if True:
 			self.pub_cmd_vel.publish(self.generate_stop_twist())
 			return
 
-		center = center.center
+		center = lane.center
 		error = center - 500
 
 		Kp = 0.0025 # 0.005 # 0.0025
-		Kd = 0.007  # 0.009 # 0.007
-
-		angular_z = Kp * error + Kd * (error - self.lastError)
-		self.lastError = error
+		Kd = 0.0007  # 0.009 # 0.007
 		twist = Twist()
-		# twist.linear.x = min(self.MAX_VEL * ((1 - abs(error) / 0.1) ** 2), 0.2)
+		lanes = lane.lanes
+
+		angular_z = (Kp * error + Kd * (error - self.lastError))
+		
 		twist.linear.x = min(self.MAX_VEL * (abs((1 - abs(error) / 500)) ** 2.2), 0.2)
+		if lanes != 2:
+			twist.linear.x = 0.1
+			angular_z = -max(1.2*angular_z, -2.0) if angular_z < 0 else -min(1.2*angular_z, 2.0)
+		self.lastError = error
 		twist.linear.y = 0
 		twist.linear.z = 0
 		twist.angular.x = 0

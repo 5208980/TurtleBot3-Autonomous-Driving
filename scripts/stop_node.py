@@ -16,9 +16,10 @@ class StopNode:
 		self.bridge = CvBridge()
 		self.counter = 1
 
-		#self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
+		# self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
 		self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
-		
+		# self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.testing_cb, queue_size=1)
+
 		self.pub_timer = rospy.Publisher('/stop/timer', Timer, queue_size=1)	# 
 		# self.pub_intersection = rospy.Publisher('/detect/intersection', UInt8, queue_size=1)
 		self.pub_img = rospy.Publisher('/stop/image', Image, queue_size=1)	# Image with rectange
@@ -151,7 +152,7 @@ class StopNode:
 				if intersections:	# Found Intersection
 					self.is_at_stop = True
 					print("Stop Sign Stop")
-					self.timer = 5
+					self.timer = 10
 					self.publish_stop_timer()
 					
 				
@@ -159,10 +160,28 @@ class StopNode:
 			if intersections: # Found Intersection
 				self.is_at_intersection = True
 				print("Intersection Stop")
-				self.timer = 5
+				self.timer = 10
 				self.publish_stop_timer()
 
-		# self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame_rgb, "rgb8"))
+		self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame_rgb, "rgb8"))
+	
+	def testing_cb(self, msg):
+		frame = self.convert_compressed_image_to_cv(msg)
+		y = 100
+		x = 100
+		h = 200
+		w = 200
+		crop_img = frame[y:y+h, x:x+w]
+		'''
+		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+		_, frame_thres = cv2.threshold(frame_gray, 127, 255, cv2.THRESH_BINARY_INV)
+		mask = np.zeros_like(frame[:,:,0])
+		gap = frame.shape[0]/2
+		polygon = np.array([ [0,frame.shape[0]], [0,frame.shape[0]-gap], [640,frame.shape[0]-gap], [640,frame.shape[0]] ])
+		cv2.fillConvexPoly(mask, polygon, 1)
+		frame = cv2.bitwise_and(frame_thres, frame_thres, mask=mask)
+		'''
+		self.pub_img.publish(self.bridge.cv2_to_imgmsg(crop_img, "bgr8"))
 
 	def main(self):
 		rospy.loginfo("%s Spinning", self.name)

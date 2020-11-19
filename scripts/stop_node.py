@@ -16,14 +16,14 @@ class StopNode:
 		self.bridge = CvBridge()
 		self.counter = 1
 
-		# self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
-		self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
-		# self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.testing_cb, queue_size=1)
+		self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
+		# self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
 
 		self.pub_timer = rospy.Publisher('/stop/timer', Timer, queue_size=1)	# 
 		# self.pub_intersection = rospy.Publisher('/detect/intersection', UInt8, queue_size=1)
 		self.pub_img = rospy.Publisher('/stop/image', Image, queue_size=1)	# Image with rectange
-		
+		self.pub_bot = rospy.Publisher('/stop/turtlebot', Image, queue_size=1)	
+
 		self.timer = 0
 		self.publish_stop_timer() # init timer msg
 		self.cooldown = 0
@@ -47,14 +47,16 @@ class StopNode:
 
 	def mask_frame_for_intersection(self, frame):
 		mask = np.zeros_like(frame[:,:,0])
-		gap = 10
+		gap = 50
 		polygon = np.array([ [0,frame.shape[0]], [0,frame.shape[0]-gap], [640,frame.shape[0]-gap], [640,frame.shape[0]] ])
 		cv2.fillConvexPoly(mask, polygon, 1)
 		frame = cv2.bitwise_and(frame, frame, mask=mask)
+		
 		return frame
 
 	def hough_lines(self, frame):
 		# Process
+		'''
 		frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		frame = cv2.blur(frame,(5,5))
 		_, frame = cv2.threshold(frame, 200 ,255, cv2.THRESH_BINARY)
@@ -65,16 +67,53 @@ class StopNode:
 		upper = int(min(255, (1.0 + sigma) * v))
 
 		edges = cv2.Canny(frame, lower, upper, apertureSize = 3)
-		lines = cv2.HoughLines(edges, 1, np.pi/90, 500)
+		'''
+
+		gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+		blur1 = cv2.blur(gray,(5,5))
+		_, th_img = cv2.threshold(blur1,130,255,cv2.THRESH_BINARY)
+		blur = cv2.blur(th_img,(5,5))
+
+		self.pub_img.publish(self.bridge.cv2_to_imgmsg(th_img, "passthrough"))
+
+		v = np.median(gray)
+		sigma = 0.33
+		lower = int(max(0, (1.0 - sigma) * v))
+		upper = int(min(255, (1.0 + sigma) * v))
+		edges = cv2.Canny(blur, lower, upper, apertureSize = 3)
+
+		# lines = cv2.HoughLines(edges, 1, np.pi/90, 500)
+		lines = cv2.HoughLines(edges, 1, np.pi/180, 150)
+
+		# lines =  cv2.HoughLinesP(dst, 1, np.pi / 180, 50, None, 50, 10)
 		return lines
+
+	def bird_eye_perspective_transform(self, frame):
+		top_x = 250
+		top_y = 0
+		bottom_x = 250
+		bottom_y = 239
+
+		pts_src = np.array([
+			[320 - top_x, 360 - top_y],
+			[320 + top_x, 360 - top_y],
+			[320 + bottom_x, 240 + bottom_y],
+			[320 - bottom_x, 240 + bottom_y]])
+		pts_dst = np.array([[200, 0], [800, 0], [800, 600], [200, 600]])
+
+		homo, status = cv2.findHomography(pts_src, pts_dst)
+		warped = cv2.warpPerspective(frame, homo, (1000, 600))
+		return warped
 
 	# frame -> bool
 	def intersection_detect(self, frame):
 		frame_full = frame.copy()
+		# frame = self.bird_eye_perspective_transform(frame)
 		frame = self.mask_frame_for_intersection(frame)
 
 		lines = self.hough_lines(frame)
-
+		
+		print(lines)
 		intersection_exist = False
 		if not lines is None:
 			for line in lines:
@@ -91,11 +130,42 @@ class StopNode:
 				intercept = y1 - (slope * x1)
 
 				if -0.2 < slope and slope < 0.2: # Horizontal Lines
-					cv2.line(frame_full, (x1, y1), (x2, y2), (255, 0, 255), 2)
+					print("INTERSECT")
+					cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
 					intersection_exist = True
 
-		self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame_full, "bgr8"))
+		# self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))
 		return intersection_exist
+
+	# ===== TurtleBot Detection =====
+	# Masking ROI
+	def turtlebot_masking(self, frame):
+		x = 0 + 50
+		y = int((frame.shape[0]/2))
+		h = 200
+		w = frame.shape[1] - 50
+		roi = frame[y:y+h, x:x+w]
+
+		frame = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+		_, frame = cv2.threshold(frame, 25, 255, cv2.THRESH_BINARY_INV)
+		return frame
+
+	# Most dominant colour in frame
+	def unique_count_app(self, a):
+		colors, count = np.unique(a.reshape(-1,a.shape[-1]), axis=0, return_counts=True)
+		return colors[count.argmax()]
+
+	# If there is TurtleBot in front of it
+	def turtlebot_detection(self, frame):
+		frame = self.turtlebot_masking(frame)
+		colour = self.unique_count_app(frame)
+		# print(colour[colour.argmax()])
+		self.pub_bot.publish(self.bridge.cv2_to_imgmsg(frame, "passthrough"))
+		if np.argmax(colour) >= 255:
+			print(np.argmax(colour))
+			return True
+		return False
+	# ================================
 
 	def publish_stop_timer(self):
 		h = Header()
@@ -126,9 +196,8 @@ class StopNode:
 		stop_signs = self.model.detectMultiScale(frame_gray, minSize=(20, 20))
 
 		if self.timer > 0:
-			print("HERE")
+			# print(self.timer)
 			if len(stop_signs) <= 0:
-				print("Couting Down")
 				self.timer -= 1
 				self.publish_stop_timer()
 			return
@@ -145,6 +214,14 @@ class StopNode:
 		# Use minSize because for not bothering with extra-small dots that would look like STOP signs
 		intersections = self.intersection_detect(frame)	# bool
 
+		self.turtlebot_detection(frame_rgb)
+
+		if self.turtlebot_detection(frame_rgb):
+			print("TurtleBot Detected Stopping ...")
+			self.timer = 40
+			self.publish_stop_timer()
+			return
+
 		if len(stop_signs) > 0:	# Found Stop Sign
 			for (x, y, width, height) in stop_signs:
 				cv2.rectangle(frame_rgb, (x, y), (x + height, y + width), (0, 255, 0), 5)
@@ -153,9 +230,7 @@ class StopNode:
 					self.is_at_stop = True
 					print("Stop Sign Stop")
 					self.timer = 10
-					self.publish_stop_timer()
-					
-				
+					self.publish_stop_timer()	
 		else: # No Stop Sign
 			if intersections: # Found Intersection
 				self.is_at_intersection = True
@@ -163,26 +238,8 @@ class StopNode:
 				self.timer = 10
 				self.publish_stop_timer()
 
-		self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame_rgb, "rgb8"))
-	
-	def testing_cb(self, msg):
-		frame = self.convert_compressed_image_to_cv(msg)
-		y = 100
-		x = 100
-		h = 200
-		w = 200
-		crop_img = frame[y:y+h, x:x+w]
-		'''
-		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-		_, frame_thres = cv2.threshold(frame_gray, 127, 255, cv2.THRESH_BINARY_INV)
-		mask = np.zeros_like(frame[:,:,0])
-		gap = frame.shape[0]/2
-		polygon = np.array([ [0,frame.shape[0]], [0,frame.shape[0]-gap], [640,frame.shape[0]-gap], [640,frame.shape[0]] ])
-		cv2.fillConvexPoly(mask, polygon, 1)
-		frame = cv2.bitwise_and(frame_thres, frame_thres, mask=mask)
-		'''
-		self.pub_img.publish(self.bridge.cv2_to_imgmsg(crop_img, "bgr8"))
-
+		
+		 # self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame_rgb, "rgb8"))
 	def main(self):
 		rospy.loginfo("%s Spinning", self.name)
 		rospy.spin()

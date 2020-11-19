@@ -9,7 +9,6 @@ import message_filters
 
 class ControlLane():
 	def __init__(self):
-		# self.sub_center = rospy.Subscriber('/detect/center', Lane, self.cbFollowLane, queue_size = 1)
 		self.sub_center = message_filters.Subscriber('/detect/center', Lane)
 		self.sub_timer = message_filters.Subscriber('/stop/timer', Timer)
 
@@ -20,14 +19,13 @@ class ControlLane():
 
 		self.lastError = 0
 		self.MAX_VEL = 0.12
-		print("HERE")
 
 		rospy.on_shutdown(self.fnShutDown)
 
 	def cbGetMaxVel(self, max_vel_msg):
 		self.MAX_VEL = max_vel_msg.data
 
-	def generate_stop_twist(self):
+	def stop(self):
 		twist = Twist()
 		twist.linear.x = 0
 		twist.linear.y = 0
@@ -39,26 +37,27 @@ class ControlLane():
 
 	def cbFollowLane(self, lane, timer):
 		time = timer.data
-		# if time > 0: 
-		if True:
-			self.pub_cmd_vel.publish(self.generate_stop_twist())
+		if time > 0: 
+		# if True:	# For Debugging
+			self.pub_cmd_vel.publish(self.stop())
 			return
 
 		center = lane.center
 		error = center - 500
 
-		Kp = 0.0025 # 0.005 # 0.0025
-		Kd = 0.0007  # 0.009 # 0.007
+		Kp = 0.0012 # 0.005 # 0.0025
+		Kd = 0.0020  # 0.009 # 0.007
 		twist = Twist()
 		lanes = lane.lanes
 
 		angular_z = (Kp * error + Kd * (error - self.lastError))
+		self.lastError = error
 		
 		twist.linear.x = min(self.MAX_VEL * (abs((1 - abs(error) / 500)) ** 2.2), 0.2)
-		if lanes != 2:
+		'''if lanes != 2:
 			twist.linear.x = 0.1
 			angular_z = -max(1.2*angular_z, -2.0) if angular_z < 0 else -min(1.2*angular_z, 2.0)
-		self.lastError = error
+		'''
 		twist.linear.y = 0
 		twist.linear.z = 0
 		twist.angular.x = 0
@@ -67,8 +66,8 @@ class ControlLane():
 		self.pub_cmd_vel.publish(twist)
 
 	def fnShutDown(self):
-		rospy.loginfo("Shutting down. cmd_vel will be 0")
-		self.pub_cmd_vel.publish(self.generate_stop_twist())
+		rospy.loginfo("Shutting Down. TurtleBot Stopping")
+		self.pub_cmd_vel.publish(self.stop())
 
 	def main(self):
 		rospy.loginfo("ControlNode :: Spinning")

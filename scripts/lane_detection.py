@@ -22,9 +22,8 @@ class LaneDetection:
 		self.prev_left_fitx = None
 		self.prev_right_fitx = None
 
-		# self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.image_cb, queue_size=1)
-		self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.image_cb, queue_size=1)
-		# self.sub_lane = rospy.Subscriber('/tranform/binary', Image, self.image_cb, queue_size=1)
+	 	self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.image_cb, queue_size=1)
+		# self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.image_cb, queue_size=1)
 
 		self.pub_bird_eye = rospy.Publisher('/transform/bird_eye', Image, queue_size=1)
 		self.pub_binary = rospy.Publisher('/transform/binary', Image, queue_size=1)
@@ -47,8 +46,10 @@ class LaneDetection:
 	def create_threshold_binary_image(self, frame):
 		frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		frame = cv2.blur(frame,(5,5))
-		_, frame = cv2.threshold(frame, 175 ,255, cv2.THRESH_BINARY)
+		_, frame = cv2.threshold(frame, 133 ,255, cv2.THRESH_BINARY)
 		binary = cv2.blur(frame,(5,5))
+		kernel = np.ones((5,5),np.float32)/25
+		binary = cv2.filter2D(binary,-1,kernel)
 		return binary
 
 	# perspective transform (bird-eye view)
@@ -181,7 +182,7 @@ class LaneDetection:
 				# print(left_x_mean)
 				left_fitx = None
 			if right_x_mean < 740:
-				# print("Bad Right Lane")
+				print("Bad Right Lane")
 				# print(right_x_mean)
 				right_fitx = None
 				# return self.prev_left_fitx, self.prev_right_fitx, None, None, self.frame_bgr

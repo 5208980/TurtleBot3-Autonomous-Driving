@@ -16,18 +16,24 @@ class StopNode:
 		self.bridge = CvBridge()
 		self.counter = 1
 
-		self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
-		# self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
+		# self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
+		self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
 
 		self.pub_timer = rospy.Publisher('/stop/timer', Timer, queue_size=1)	# 
 		# self.pub_intersection = rospy.Publisher('/detect/intersection', UInt8, queue_size=1)
+
+		self.frame_img = None
 		self.pub_img = rospy.Publisher('/stop/image', Image, queue_size=1)	# Image with rectange
 		self.pub_bot = rospy.Publisher('/stop/turtlebot', Image, queue_size=1)	
-
+		
 		self.timer = 0
-		self.publish_stop_timer() # init timer msg
 		self.cooldown = 0
+		self.publish_stop_timer() # init timer msg
+
+
 		self.is_at_stop = False
+		self.stop_thres = 0.1
+
 		self.is_at_intersection = False
 
 	def onload(self):
@@ -74,8 +80,6 @@ class StopNode:
 		_, th_img = cv2.threshold(blur1,130,255,cv2.THRESH_BINARY)
 		blur = cv2.blur(th_img,(5,5))
 
-		self.pub_img.publish(self.bridge.cv2_to_imgmsg(th_img, "passthrough"))
-
 		v = np.median(gray)
 		sigma = 0.33
 		lower = int(max(0, (1.0 - sigma) * v))
@@ -113,7 +117,6 @@ class StopNode:
 
 		lines = self.hough_lines(frame)
 		
-		print(lines)
 		intersection_exist = False
 		if not lines is None:
 			for line in lines:
@@ -129,12 +132,11 @@ class StopNode:
 					slope = (y2 - y1) / (x2 - x1)
 				intercept = y1 - (slope * x1)
 
-				if -0.2 < slope and slope < 0.2: # Horizontal Lines
-					print("INTERSECT")
-					cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
+				if -self.stop_thres < slope and slope < self.stop_thres: # Horizontal Lines
+					# print("Intersection Detected")
+					cv2.line(self.frame_img, (x1, y1), (x2, y2), (255, 0, 255), 8)
 					intersection_exist = True
 
-		# self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))
 		return intersection_exist
 
 	# ===== TurtleBot Detection =====
@@ -162,7 +164,8 @@ class StopNode:
 		# print(colour[colour.argmax()])
 		self.pub_bot.publish(self.bridge.cv2_to_imgmsg(frame, "passthrough"))
 		if np.argmax(colour) >= 255:
-			print(np.argmax(colour))
+			# print(np.argmax(colour))
+			print("TurtleBot Spotted")
 			return True
 		return False
 	# ================================
@@ -172,7 +175,7 @@ class StopNode:
 		h.stamp = rospy.Time.now()
 
 		t = Float64()
-		t = self.timer
+		t = self.timer if self.timer else 0
 
 		int_msg = Timer()
 		int_msg.header = h
@@ -190,6 +193,7 @@ class StopNode:
 			self.counter = 1
 
 		frame = self.convert_compressed_image_to_cv(msg)
+		self.frame_img = frame.copy()
 		
 		frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -203,7 +207,8 @@ class StopNode:
 			return
 
 		if self.is_at_stop == True or self.is_at_intersection == True:
-			self.cooldown = 5
+			print("Intersection CoolDown")
+			self.cooldown = 50
 			self.is_at_stop = False
 			self.is_at_intersection = False
 
@@ -224,22 +229,23 @@ class StopNode:
 
 		if len(stop_signs) > 0:	# Found Stop Sign
 			for (x, y, width, height) in stop_signs:
-				cv2.rectangle(frame_rgb, (x, y), (x + height, y + width), (0, 255, 0), 5)
+				cv2.rectangle(self.frame_img, (x, y), (x + height, y + width), (0, 255, 0), 5)
 				
 				if intersections:	# Found Intersection
 					self.is_at_stop = True
-					print("Stop Sign Stop")
+					print("Stop Sign")
 					self.timer = 10
 					self.publish_stop_timer()	
 		else: # No Stop Sign
 			if intersections: # Found Intersection
 				self.is_at_intersection = True
-				print("Intersection Stop")
-				self.timer = 10
+				print("Intersection")
+				self.timer = 15
 				self.publish_stop_timer()
 
-		
-		 # self.pub_img.publish(self.bridge.cv2_to_imgmsg(frame_rgb, "rgb8"))
+		self.pub_img.publish(self.bridge.cv2_to_imgmsg(self.frame_img, "bgr8"))
+
+
 	def main(self):
 		rospy.loginfo("%s Spinning", self.name)
 		rospy.spin()

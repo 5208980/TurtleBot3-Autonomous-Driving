@@ -1,0 +1,3 @@
+<launch>
+	<node pkg="project_2" name="stop_node" type="stop_node.py" output="screen" />
+</launch>

@@ -18,6 +18,7 @@ class ControlLane():
 		self.pub_cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size = 1)
 
 		self.lastError = 0
+		self.last_angular = 0		# > 0 Left, < 0 Right
 		self.MAX_VEL = 0.12
 
 		rospy.on_shutdown(self.fnShutDown)
@@ -43,17 +44,19 @@ class ControlLane():
 			return
 
 		center = lane.center
+		lanes = lane.lanes
 		error = center - 500
 
 		Kp = 0.0012 # 0.005 # 0.0025
 		Kd = 0.0020  # 0.009 # 0.007
 		twist = Twist()
-		lanes = lane.lanes
 
 		angular_z = (Kp * error + Kd * (error - self.lastError))
 		self.lastError = error
 		
 		twist.linear.x = min(self.MAX_VEL * (abs((1 - abs(error) / 500)) ** 2.2), 0.2)
+
+			
 		'''if lanes != 2:
 			twist.linear.x = 0.1
 			angular_z = -max(1.2*angular_z, -2.0) if angular_z < 0 else -min(1.2*angular_z, 2.0)
@@ -62,7 +65,13 @@ class ControlLane():
 		twist.linear.z = 0
 		twist.angular.x = 0
 		twist.angular.y = 0
+
+		# print(self.last_angular)
 		twist.angular.z = -max(angular_z, -2.0) if angular_z < 0 else -min(angular_z, 2.0)
+		'''if lanes == 0:	# Turn from last turn
+			twist.linear.x = 0
+			twist.angular.z = self.last_angular'''
+		self.last_angular = twist.angular.z
 		self.pub_cmd_vel.publish(twist)
 
 	def fnShutDown(self):

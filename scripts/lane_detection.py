@@ -14,16 +14,12 @@ class LaneDetection:
 	def __init__(self):
 		self.name = "LaneDetection ::"
 		self.frame_bgr = None
-		self.prev_left_lane = None
-		self.prev_right_lane = None
 		self.bridge = CvBridge()
 
-		self.bad_lanes = False
-		self.prev_left_fitx = None
-		self.prev_right_fitx = None
+		self.prev_centerx = 0
 
-	 	self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.image_cb, queue_size=1)
-		# self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.image_cb, queue_size=1)
+	 	# self.sub_lane = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.image_cb, queue_size=1)
+		self.sub_lane = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.image_cb, queue_size=1)
 
 		self.pub_bird_eye = rospy.Publisher('/transform/bird_eye', Image, queue_size=1)
 		self.pub_binary = rospy.Publisher('/transform/binary', Image, queue_size=1)
@@ -74,6 +70,17 @@ class LaneDetection:
 		homo, status = cv2.findHomography(pts_src, pts_dst)
 		warped = cv2.warpPerspective(frame, homo, (1000, 600))
 		return warped
+
+	def lane_gradient(self, polyfit):	
+		poly = np.poly1d(polyfit)	
+		poly_deriv = np.polyder(poly)	
+		# poly_deriv[0] = b
+		# poly_deriv[1] = m
+		
+		x = int(self.frame_bgr.shape[0]/2)
+		# m = poly_deriv(x)
+
+		return poly_deriv[1] if (not poly_deriv[1] is None) else 0
 
 	# should take in binary_frame (black and white image)
 	def sliding_window(self, frame):
@@ -153,32 +160,28 @@ class LaneDetection:
 		ploty = np.linspace(0, frame.shape[0] - 1, frame.shape[0])
 
 		left_fitx, right_fitx = None, None
+		leftm, rightm = 0, 0
 		if not len(leftx) is 0:
 			left_fit = np.polyfit(lefty, leftx, 2)
-			# print('Left lane coefficients: {}'.format(left_fit))
 			left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-			# left_fitx = left_fit[0]*ploty**3 + left_fit[1]*ploty**2 + left_fit[2]*ploty + left_fit[3] 
 
+			leftm = self.lane_gradient(left_fit)
 			pts_left = np.array([np.flipud(np.transpose(np.vstack([left_fitx, ploty])))])
-			cv2.polylines(self.frame_bgr, np.int_([pts_left]), isClosed=False, color=(255, 0, 255), thickness=25)
+			cv2.polylines(self.frame_bgr, np.int_([pts_left]), isClosed=False, color=(0, 255, 255), thickness=25)
 
 		if not len(rightx) is 0:
 			right_fit = np.polyfit(righty, rightx, 2)
-			# print('Right lane coefficients: {}'.format(right_fit))
 			right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
-			# right_fitx = right_fit[0]*ploty**3 + right_fit[1]*ploty**2 + right_fit[2]*ploty + right_fit[3]
 
+			rightm = self.lane_gradient(right_fit)
 			pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
-			cv2.polylines(self.frame_bgr, np.int_([pts_right]), isClosed=False, color=(255, 0, 255), thickness=25)
+			cv2.polylines(self.frame_bgr, np.int_([pts_right]), isClosed=False, color=(255, 255, 255), thickness=25)
 		
 		# Validate lines
 		if (not len(leftx) is 0) and (not len(rightx) is 0):
-			left_x_mean = np.mean(leftx, axis=0)
-			right_x_mean = np.mean(rightx, axis=0)
-			lane_width = np.subtract(right_x_mean, left_x_mean)
-			
-			if left_x_mean > 740:
-				# print("Bad Left Lane")
+			'''
+			if left_x_mean >= 740:
+				print("Bad Left Lane")
 				# print(left_x_mean)
 				left_fitx = None
 			if right_x_mean < 740:
@@ -189,25 +192,33 @@ class LaneDetection:
 
 			if lane_width < 100 or lane_width > 900:
 				left_fitx = None
-
 			# Draw width lane on image
 			position = (10,50)
 			cv2.putText(self.frame_bgr, str(lane_width), position, cv2.FONT_HERSHEY_SIMPLEX, 1,(209, 80, 0, 255), 3)
-		elif (not len(leftx) is 0) and (len(rightx) is 0):
-			left_fitx = None
-		else:
-			right_fitx = None
+			'''
+			left_x_mean = np.mean(leftx, axis=0)
+			right_x_mean = np.mean(rightx, axis=0)
+			lane_width = np.subtract(right_x_mean, left_x_mean)
 
-		self.bad_lanes = False
+			if leftm > 0 and rightm > 0:	# Needs to turn right
+				# print("Bad Right Lane")
+				right_fitx = None
+			elif leftm < 0 and rightm < 0:	# Needs to turn left
+				# print("Bad Left Lane")
+				left_fitx = None
+
+			'''if lane_width < 200:	# Lane too small, move straight
+				print("Lane Size!")
+				right_fitx = None
+				left_fitx = None'''
 
 		# Sliding Window Image
 		self.pub_window.publish(self.bridge.cv2_to_imgmsg(sliding_window_frame, "bgr8"))
-		self.prev_left_fitx = left_fitx
-		self.prev_right_fitx = right_fitx
-		return left_fitx, right_fitx, left_lane_inds, right_lane_inds, self.frame_bgr # bgr8
-		# return None, None, sliding_window_frame
+		return left_fitx, right_fitx, self.frame_bgr # bgr8
+
 
 	def publish_center(self, center, lanes):
+		self.prev_centerx = center
 		h = Header()
 		h.stamp = rospy.Time.now()
 
@@ -237,20 +248,27 @@ class LaneDetection:
 		self.pub_binary.publish(self.bridge.cv2_to_imgmsg(frame, "passthrough"))
 
 		# Left Lane, Right Lane, _, _, Output Frame
-		left_poly, right_poly, left_pts, right_pts, frame = self.sliding_window(frame)
+		left_poly, right_poly, frame = self.sliding_window(frame)
 
 		if (not left_poly is None) and (not right_poly is None): # Left and Right Lane
-			# print("Two")
+			print("Two")
 			centerx = np.mean([left_poly, right_poly], axis=0)
 			self.publish_center(centerx.item(350), 2)
+			frame = cv2.circle(frame, (int (centerx.item(350)), 150),5, (0, 0, 0), 5)
 		elif (left_poly is None) and (not right_poly is None): # Only Right Lane
-			# print("Right")
+			print("Right")
 			centerx = np.subtract(right_poly, 320)
+			# print(centerx.item(350))
 			self.publish_center(centerx.item(350), 1)
+			frame = cv2.circle(frame, (int (centerx.item(350)), 150),5, (0, 0, 0), 5)
 		elif (not left_poly is None) and (right_poly is None): # Only Left Lane
-			# print("Left")
+			print("Left")
 			centerx = np.add(left_poly, 320)
 			self.publish_center(centerx.item(350), 1)
+			frame = cv2.circle(frame, (int (centerx.item(350)), 150),5, (0, 0, 0), 5)
+		else:
+			print("None")
+			self.publish_center(self.prev_centerx, 0)
 
 		# Lane Lines Image
 		self.pub_lane.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))

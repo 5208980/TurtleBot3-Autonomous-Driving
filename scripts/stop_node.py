@@ -16,8 +16,8 @@ class StopNode:
 		self.bridge = CvBridge()
 		self.counter = 1
 
-		# self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
-		self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
+		self.sub = rospy.Subscriber('/raspicam_node/image/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
+		# self.sub = rospy.Subscriber('/camera/rgb/image_raw/compressed', CompressedImage, self.stop_sign_detect_cb, queue_size=1)
 
 		self.pub_timer = rospy.Publisher('/stop/timer', Timer, queue_size=1)	# 
 		# self.pub_intersection = rospy.Publisher('/detect/intersection', UInt8, queue_size=1)
@@ -45,7 +45,6 @@ class StopNode:
 		if not self.model.load(dir_path):
 			rospy.logerr('%s Classifier couldn\'t load', self.name)
 
-	# Default bgr8 encoding
 	def convert_compressed_image_to_cv(self, msg):
 		frame_arr = np.fromstring(msg.data, np.uint8)
 		frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
@@ -57,27 +56,22 @@ class StopNode:
 		polygon = np.array([ [0,frame.shape[0]], [0,frame.shape[0]-gap], [640,frame.shape[0]-gap], [640,frame.shape[0]] ])
 		cv2.fillConvexPoly(mask, polygon, 1)
 		frame = cv2.bitwise_and(frame, frame, mask=mask)
-		
+		return frame
+
+	def adjust_brightness(self, frame, value=-50):
+		hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+		h, s, v = cv2.split(hsv)
+		v = cv2.add(v,value)
+		v[v > 255] = 255
+		v[v < 0] = 0
+		final_hsv = cv2.merge((h, s, v))
+		frame = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
 		return frame
 
 	def hough_lines(self, frame):
-		# Process
-		'''
-		frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-		frame = cv2.blur(frame,(5,5))
-		_, frame = cv2.threshold(frame, 200 ,255, cv2.THRESH_BINARY)
-		frame = cv2.blur(frame,(5,5))
-		v = np.median(frame)
-		sigma = 0.33
-		lower = int(max(0, (1.0 - sigma) * v))
-		upper = int(min(255, (1.0 + sigma) * v))
-
-		edges = cv2.Canny(frame, lower, upper, apertureSize = 3)
-		'''
-
 		gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 		blur1 = cv2.blur(gray,(5,5))
-		_, th_img = cv2.threshold(blur1,130,255,cv2.THRESH_BINARY)
+		_, th_img = cv2.threshold(blur1,133,255,cv2.THRESH_BINARY)
 		blur = cv2.blur(th_img,(5,5))
 
 		v = np.median(gray)
@@ -87,9 +81,8 @@ class StopNode:
 		edges = cv2.Canny(blur, lower, upper, apertureSize = 3)
 
 		# lines = cv2.HoughLines(edges, 1, np.pi/90, 500)
-		lines = cv2.HoughLines(edges, 1, np.pi/180, 150)
+		lines = cv2.HoughLines(edges, 1, np.pi/90, 400)
 
-		# lines =  cv2.HoughLinesP(dst, 1, np.pi / 180, 50, None, 50, 10)
 		return lines
 
 	def bird_eye_perspective_transform(self, frame):
@@ -111,10 +104,10 @@ class StopNode:
 
 	# frame -> bool
 	def intersection_detect(self, frame):
-		frame_full = frame.copy()
+		frame_full = frame.copy()	# bgr8
 		# frame = self.bird_eye_perspective_transform(frame)
 		frame = self.mask_frame_for_intersection(frame)
-
+		frame = self.adjust_brightness(frame)
 		lines = self.hough_lines(frame)
 		
 		intersection_exist = False
@@ -149,21 +142,22 @@ class StopNode:
 		roi = frame[y:y+h, x:x+w]
 
 		frame = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
-		_, frame = cv2.threshold(frame, 25, 255, cv2.THRESH_BINARY_INV)
+		_, frame = cv2.threshold(frame, 10, 255, cv2.THRESH_BINARY_INV)
+
 		return frame
 
 	# Most dominant colour in frame
-	def unique_count_app(self, a):
-		colors, count = np.unique(a.reshape(-1,a.shape[-1]), axis=0, return_counts=True)
-		return colors[count.argmax()]
+	def unique_count_app(self, frame):
+		histogram = cv2.calcHist([frame], [0], None, [256], [0, 256])
+		print(np.argmax(histogram))
+		return np.argmax(histogram)
 
 	# If there is TurtleBot in front of it
 	def turtlebot_detection(self, frame):
 		frame = self.turtlebot_masking(frame)
 		colour = self.unique_count_app(frame)
-		# print(colour[colour.argmax()])
 		self.pub_bot.publish(self.bridge.cv2_to_imgmsg(frame, "passthrough"))
-		if np.argmax(colour) >= 255:
+		if colour >= 250:
 			# print(np.argmax(colour))
 			print("TurtleBot Spotted")
 			return True
@@ -222,8 +216,8 @@ class StopNode:
 		self.turtlebot_detection(frame_rgb)
 
 		if self.turtlebot_detection(frame_rgb):
-			print("TurtleBot Detected Stopping ...")
-			self.timer = 40
+			# print("TurtleBot Detected Stopping ...")
+			self.timer = 10
 			self.publish_stop_timer()
 			return
 
@@ -236,12 +230,12 @@ class StopNode:
 					print("Stop Sign")
 					self.timer = 10
 					self.publish_stop_timer()	
-		else: # No Stop Sign
+		'''else: # No Stop Sign
 			if intersections: # Found Intersection
 				self.is_at_intersection = True
 				print("Intersection")
 				self.timer = 15
-				self.publish_stop_timer()
+				self.publish_stop_timer()'''
 
 		self.pub_img.publish(self.bridge.cv2_to_imgmsg(self.frame_img, "bgr8"))
 

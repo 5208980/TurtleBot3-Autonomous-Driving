@@ -19,7 +19,10 @@ class ControlLane():
 
 		self.lastError = 0
 		self.last_angular = 0		# > 0 Left, < 0 Right
-		self.MAX_VEL = 0.12
+		self.MAX_VEL = 0.09
+
+		self.stopped = False	# Initially not stopping
+		self.stopped_timer = 0	# Initially not stopping
 
 		rospy.on_shutdown(self.fnShutDown)
 
@@ -36,19 +39,41 @@ class ControlLane():
 		twist.angular.z = 0
 		return twist
 
+	def straight(self):
+		twist = Twist()
+		twist.linear.x = 0.2
+		twist.linear.y = 0
+		twist.linear.z = 0
+		twist.angular.x = 0
+		twist.angular.y = 0
+		twist.angular.z = 0
+		return twist
+
 	def cbFollowLane(self, lane, timer):
 		time = timer.data
 		if time > 0: 
 		# if True:	# For Debugging
 			self.pub_cmd_vel.publish(self.stop())
+			self.stopped = True		
+			return
+
+		if self.stopped_timer > 0:
+			print("Going Straight")
+			self.pub_cmd_vel.publish(self.straight())
+			self.stopped_timer -= 1
+			return
+		if self.stopped:	# Stopped at intersection but is ready to go
+			print("Start Going Straight")
+			self.stopped = False	# reset
+			self.stopped_timer = 20	# move streight
 			return
 
 		center = lane.center
 		lanes = lane.lanes
 		error = center - 500
 
-		Kp = 0.0012 # 0.005 # 0.0025
-		Kd = 0.0020  # 0.009 # 0.007
+		Kp = 0.0006 # 0.005 # 0.0025
+		Kd = 0.0012  # 0.009 # 0.007
 		twist = Twist()
 
 		angular_z = (Kp * error + Kd * (error - self.lastError))

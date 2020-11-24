@@ -19,7 +19,7 @@ class ControlLane():
 
 		self.lastError = 0
 		self.last_angular = 0		# > 0 Left, < 0 Right
-		self.MAX_VEL = 0.09
+		self.MAX_VEL = 0.08 # 0.09
 
 		self.stopped = False	# Initially not stopping
 		self.stopped_timer = 0	# Initially not stopping
@@ -52,7 +52,7 @@ class ControlLane():
 	def cbFollowLane(self, lane, timer):
 		time = timer.data
 		if time > 0: 
-		# if True:	# For Debugging
+		#if True:	# For Debugging
 			self.pub_cmd_vel.publish(self.stop())
 			self.stopped = True		
 			return
@@ -65,7 +65,7 @@ class ControlLane():
 		if self.stopped:	# Stopped at intersection but is ready to go
 			print("Start Going Straight")
 			self.stopped = False	# reset
-			self.stopped_timer = 20	# move streight
+			self.stopped_timer = 10	# move streight
 			return
 
 		center = lane.center

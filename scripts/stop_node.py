@@ -73,7 +73,7 @@ class StopNode:
 		blur1 = cv2.blur(gray,(5,5))
 		_, th_img = cv2.threshold(blur1,133,255,cv2.THRESH_BINARY)
 		blur = cv2.blur(th_img,(5,5))
-
+		#self.pub_bot.publish(self.bridge.cv2_to_imgmsg(blur, "passthrough"))
 		v = np.median(gray)
 		sigma = 0.33
 		lower = int(max(0, (1.0 - sigma) * v))
@@ -81,7 +81,7 @@ class StopNode:
 		edges = cv2.Canny(blur, lower, upper, apertureSize = 3)
 
 		# lines = cv2.HoughLines(edges, 1, np.pi/90, 500)
-		lines = cv2.HoughLines(edges, 1, np.pi/90, 400)
+		lines = cv2.HoughLines(edges, 1, np.pi/180, 400)
 
 		return lines
 
@@ -107,7 +107,7 @@ class StopNode:
 		frame_full = frame.copy()	# bgr8
 		# frame = self.bird_eye_perspective_transform(frame)
 		frame = self.mask_frame_for_intersection(frame)
-		frame = self.adjust_brightness(frame)
+		# frame = self.adjust_brightness(frame)
 		lines = self.hough_lines(frame)
 		
 		intersection_exist = False
@@ -149,7 +149,7 @@ class StopNode:
 	# Most dominant colour in frame
 	def unique_count_app(self, frame):
 		histogram = cv2.calcHist([frame], [0], None, [256], [0, 256])
-		print(np.argmax(histogram))
+		#print(np.argmax(histogram))
 		return np.argmax(histogram)
 
 	# If there is TurtleBot in front of it
@@ -180,11 +180,11 @@ class StopNode:
 	def stop_sign_detect_cb(self, msg):
 		self.publish_stop_timer()
 		# Drop frame for processing speed (6ps)
-		if self.counter % 3 != 0:
+		'''if self.counter % 3 != 0:
 			self.counter += 1
 			return
 		else:
-			self.counter = 1
+			self.counter = 1'''
 
 		frame = self.convert_compressed_image_to_cv(msg)
 		self.frame_img = frame.copy()
@@ -216,7 +216,7 @@ class StopNode:
 		self.turtlebot_detection(frame_rgb)
 
 		if self.turtlebot_detection(frame_rgb):
-			# print("TurtleBot Detected Stopping ...")
+			print("TurtleBot Detected Stopping ...")
 			self.timer = 10
 			self.publish_stop_timer()
 			return
@@ -230,12 +230,12 @@ class StopNode:
 					print("Stop Sign")
 					self.timer = 10
 					self.publish_stop_timer()	
-		'''else: # No Stop Sign
+		else: # No Stop Sign
 			if intersections: # Found Intersection
 				self.is_at_intersection = True
 				print("Intersection")
 				self.timer = 15
-				self.publish_stop_timer()'''
+				self.publish_stop_timer()
 
 		self.pub_img.publish(self.bridge.cv2_to_imgmsg(self.frame_img, "bgr8"))
 

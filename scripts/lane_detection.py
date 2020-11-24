@@ -242,12 +242,14 @@ class LaneDetection:
 
 	def image_cb(self, msg):
 		frame = self.convert_compressed_image_to_cv(msg)
-		self.frame_bgr = frame.copy()	# Save original frame
-		frame = self.adjust_brightness(frame, -50)
+
+		# frame = self.adjust_brightness(frame, -5)
 		frame = self.bird_eye_perspective_transform(frame)
+		self.frame_bgr = frame.copy()	# Save original frame
 		self.pub_bird_eye.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8")) # /trannsform/bird_eye
 		frame = self.create_threshold_binary_image(frame)
 		frame = self.crop_frame(frame)
+
 		self.pub_binary.publish(self.bridge.cv2_to_imgmsg(frame, "passthrough"))  # /trannsform/binary
 
 		# Left Lane, Right Lane, Frame
